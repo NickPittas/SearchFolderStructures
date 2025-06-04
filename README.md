@@ -17,7 +17,7 @@ This project provides several utilities for working with large folder structures
 The primary application featuring a modern PyQt5 GUI for intelligent file organization.
 
 **Features:**
-- 🤖 **AI-Powered Classification** - Uses Ollama LLM to automatically classify files
+- 🤖 **AI-Powered Classification** - Uses Ollama or OpenRouter LLM to automatically classify files
 - 📁 **Drag & Drop Interface** - Easy file and folder addition
 - 🎨 **Dark Theme UI** - Modern, professional interface with dockable panels
 - 🔄 **Batch Operations** - Move/copy multiple files at once
@@ -26,17 +26,20 @@ The primary application featuring a modern PyQt5 GUI for intelligent file organi
 - 🏗️ **Template Structures** - KENT and Sphere VFX folder structures
 - 🔍 **File Browser** - Integrated file system browser
 - ⚡ **Sequence Detection** - Automatically detects and groups image sequences
+- 🌐 **Multi-Provider Support** - Works with both Ollama (local) and OpenRouter (cloud) AI services
 
 **Supported File Types:**
 - **VFX/Commercial**: `.exr`, `.dpx`, `.tif`, `.png`, `.mov`, `.mxf`, `.avi`, `.psd`, `.ai`, `.jpg`, `.mp4`, `.docx`, `.pdf`, `.xlsx`, `.pptx`, `.wav`, `.mp3`, `.aiff`, `.nk`, `.aep`, `.prproj`, `.drp`, `.xml`, `.edl`, `.json`, `.txt`, `.aaf`
 
 **How to Use:**
 1. Launch the application: `python FIelOrganizer.py`
-2. Set up Ollama server URL and select a model
+2. Choose your AI provider:
+   - **Ollama**: Set up server URL and fetch available models
+   - **OpenRouter**: Enter your API key and select from supported models
 3. Add files or folders via drag-drop or buttons
 4. Set destination project folder
 5. Choose folder structure template (KENT or Sphere)
-6. Click "Classify with Ollama" to get AI suggestions
+6. Click "Classify Files" to get AI suggestions
 7. Review results and move/copy files as needed
 
 ### 2. AI Folder Scanner (`ai_folder_scanner.py`)
@@ -75,17 +78,24 @@ python folder_structure_to_json_ui.py
 ### Prerequisites
 
 - Python 3.7+
-- Ollama (for AI classification features)
+- AI Provider (choose one):
+  - **Ollama** (for local AI classification)
+  - **OpenRouter** (for cloud-based AI classification)
 
 ### Dependencies
 
 Install required packages:
 
 ```bash
-pip install PyQt5 langchain-ollama tkinterdnd2 tqdm
+pip install PyQt5 langchain-ollama tkinterdnd2 tqdm requests cryptography
 ```
 
-### Ollama Setup
+**Optional:**
+- `cryptography` - For encrypted API key storage (highly recommended for OpenRouter)
+
+### AI Provider Setup
+
+#### Option 1: Ollama (Local AI)
 
 1. Install [Ollama](https://ollama.ai/)
 2. Pull a compatible model:
@@ -98,6 +108,31 @@ pip install PyQt5 langchain-ollama tkinterdnd2 tqdm
    ```bash
    ollama serve
    ```
+
+#### Option 2: OpenRouter (Cloud AI)
+
+1. Sign up for an account at [OpenRouter](https://openrouter.ai/)
+2. Generate an API key from your dashboard
+3. In the application, select "OpenRouter" as your provider
+4. Enter your API key and select from available models:
+   - Claude 3.5 Sonnet (recommended)
+   - GPT-4 Turbo
+   - Llama 3.1 405B
+   - And many more
+
+**🔐 Secure API Key Storage:**
+- Install `cryptography` package for encrypted key storage
+- Use "Save" button to encrypt and store your API key locally
+- Use "Load" button to decrypt and load your saved key
+- Keys are encrypted with a master password you choose
+
+**Supported OpenRouter Models:**
+- `anthropic/claude-3.5-sonnet`
+- `openai/gpt-4-turbo`  
+- `meta-llama/llama-3.1-405b-instruct`
+- `google/gemini-pro-1.5`
+- `mistralai/mixtral-8x7b-instruct`
+- `cohere/command-r-plus`
 
 ## 📁 Project Structure
 

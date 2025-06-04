@@ -3,20 +3,83 @@ import os
 import json
 import re
 import subprocess
+import requests
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QFileDialog,
     QListWidget, QLabel, QTextEdit, QMessageBox, QHBoxLayout, QComboBox, QLineEdit,
     QSplitter, QTreeView, QFileSystemModel, QMenu, QAction, QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QCheckBox, QDialog, QProgressBar,
-    QMainWindow, QDockWidget, QInputDialog
+    QMainWindow, QDockWidget, QInputDialog, QGroupBox
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon, QPalette, QColor
 from langchain.prompts import PromptTemplate
 from langchain_ollama.llms import OllamaLLM
 
+# Import secure storage
+try:
+    from secure_storage import SecureStorage
+    SECURE_STORAGE_AVAILABLE = True
+except ImportError:
+    SECURE_STORAGE_AVAILABLE = False
+    print("Warning: cryptography package not available. API keys will not be encrypted.")
+
 # Allowed file extensions based on the prompt template
 ALLOWED_EXTENSIONS_VFX = {'.exr', '.dpx', '.tif', '.png', '.mov', '.mxf', '.avi', '.psd', '.ai', '.jpg', '.mp4', '.docx', '.pdf', '.xlsx', '.pptx', '.wav', '.mp3', '.aiff', '.nk', '.aep', '.prproj', '.drp', '.xml', '.edl', '.json', '.txt', '.aaf'}
 ALLOWED_EXTENSIONS_COMMERCIAL = {'.exr', '.dpx', '.tif', '.png', '.mov', '.mxf', '.avi', '.psd', '.ai', '.jpg', '.mp4', '.docx', '.pdf', '.xlsx', '.pptx', '.wav', '.mp3', '.aiff', '.nk', '.aep', '.prproj', '.drp', '.xml', '.edl', '.json', '.txt', '.aaf'} 
+
+# OpenRouter popular models
+OPENROUTER_MODELS = [
+    "anthropic/claude-3.5-sonnet",
+    "anthropic/claude-3-opus",
+    "anthropic/claude-3-haiku",
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    "openai/gpt-4-turbo",
+    "google/gemini-pro-1.5",
+    "google/gemini-flash-1.5",
+    "meta-llama/llama-3.1-405b-instruct",
+    "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/llama-3.1-8b-instruct",
+    "mistralai/mistral-large",
+    "mistralai/mistral-medium",
+    "qwen/qwen-2.5-72b-instruct",
+    "deepseek/deepseek-chat"
+]
+
+class OpenRouterLLM:
+    """Simple OpenRouter API wrapper for compatibility with Ollama interface"""
+    
+    def __init__(self, model, api_key):
+        self.model = model
+        self.api_key = api_key
+        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+    
+    def invoke(self, prompt):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/your-repo",  # Optional
+            "X-Title": "AI File Organizer"  # Optional
+        }
+        
+        data = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4000
+        }
+        
+        try:
+            response = requests.post(self.base_url, headers=headers, json=data, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"OpenRouter API Error: {e}")
+        except KeyError as e:
+            raise Exception(f"Unexpected response format from OpenRouter: {e}")
 
 # Load prompt templates from Markdown files
 
@@ -155,20 +218,77 @@ class FileClassifierApp(QMainWindow):
         # Right panel dock (controls)
         self.right_panel = QWidget()
         self.right_layout = QVBoxLayout()
-        self.right_panel.setLayout(self.right_layout)
-
-        # --- Ollama Setup group ---
-        ollama_setup_panel = QWidget()
-        ollama_setup_layout = QVBoxLayout()
-        ollama_setup_layout.addWidget(QLabel("Select Ollama Model:"))
+        self.right_panel.setLayout(self.right_layout)        # --- AI Provider Setup group ---
+        ai_setup_group = QGroupBox("AI Provider Setup")
+        ai_setup_layout = QVBoxLayout()
+        
+        # Provider selection
+        provider_row = QHBoxLayout()
+        provider_row.addWidget(QLabel("Provider:"))
+        self.provider_dropdown = QComboBox()
+        self.provider_dropdown.addItems(["Ollama", "OpenRouter"])
+        self.provider_dropdown.currentTextChanged.connect(self.on_provider_changed)
+        provider_row.addWidget(self.provider_dropdown)
+        ai_setup_layout.addLayout(provider_row)
+        
+        # Model selection
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Model:"))
         self.model_dropdown = QComboBox()
-        ollama_setup_layout.addWidget(self.model_dropdown)
-        ollama_setup_layout.addWidget(QLabel("Ollama Server URL:"))
+        model_row.addWidget(self.model_dropdown)
+        ai_setup_layout.addLayout(model_row)
+        
+        # Ollama specific settings
+        self.ollama_settings = QWidget()
+        ollama_layout = QVBoxLayout()
+        ollama_layout.addWidget(QLabel("Ollama Server URL:"))
         self.ollama_url_input = QLineEdit("http://localhost:11434")
-        ollama_setup_layout.addWidget(self.ollama_url_input)
-        ollama_setup_panel.setLayout(ollama_setup_layout)
-        self.right_layout.addWidget(QLabel("Ollama Setup"))
-        self.right_layout.addWidget(ollama_setup_panel)
+        ollama_layout.addWidget(self.ollama_url_input)
+        self.ollama_settings.setLayout(ollama_layout)
+        ai_setup_layout.addWidget(self.ollama_settings)
+          # OpenRouter specific settings
+        self.openrouter_settings = QWidget()
+        openrouter_layout = QVBoxLayout()
+        openrouter_layout.addWidget(QLabel("OpenRouter API Key:"))
+        
+        # API Key input row with load/save buttons
+        api_key_row = QHBoxLayout()
+        self.openrouter_api_key_input = QLineEdit()
+        self.openrouter_api_key_input.setEchoMode(QLineEdit.Password)
+        self.openrouter_api_key_input.setPlaceholderText("Enter your OpenRouter API key")
+        api_key_row.addWidget(self.openrouter_api_key_input)
+        
+        if SECURE_STORAGE_AVAILABLE:
+            # Load key button
+            self.load_key_btn = QPushButton("Load")
+            self.load_key_btn.setMaximumWidth(60)
+            self.load_key_btn.clicked.connect(self.load_openrouter_key)
+            api_key_row.addWidget(self.load_key_btn)
+            
+            # Save key button
+            self.save_key_btn = QPushButton("Save")
+            self.save_key_btn.setMaximumWidth(60)
+            self.save_key_btn.clicked.connect(self.save_openrouter_key)
+            api_key_row.addWidget(self.save_key_btn)
+        
+        openrouter_layout.addLayout(api_key_row)
+        
+        if not SECURE_STORAGE_AVAILABLE:
+            warning_label = QLabel("⚠️ Install 'cryptography' package for encrypted key storage")
+            warning_label.setStyleSheet("color: orange; font-size: 9pt;")
+            openrouter_layout.addWidget(warning_label)
+        
+        self.openrouter_settings.setLayout(openrouter_layout)
+        self.openrouter_settings.setVisible(False)  # Initially hidden
+        ai_setup_layout.addWidget(self.openrouter_settings)
+        
+        # Fetch models button
+        self.fetch_models_btn = QPushButton("Fetch Models")
+        self.fetch_models_btn.clicked.connect(self.fetch_models)
+        ai_setup_layout.addWidget(self.fetch_models_btn)
+        
+        ai_setup_group.setLayout(ai_setup_layout)
+        self.right_layout.addWidget(ai_setup_group)
 
         # --- Chat window ---
         chat_panel = QWidget()
@@ -205,9 +325,7 @@ class FileClassifierApp(QMainWindow):
         # Destination project folder input
         self.right_layout.addWidget(QLabel("Destination Project Folder (used as root for AI classification):"))
         self.project_folder_input = QLineEdit("/Files/")
-        self.right_layout.addWidget(self.project_folder_input)
-
-        # Buttons row
+        self.right_layout.addWidget(self.project_folder_input)        # Buttons row
         btn_layout = QHBoxLayout()
         self.add_files_btn = QPushButton(icon_add, "Add Files")
         self.add_files_btn.clicked.connect(self.add_files)
@@ -221,7 +339,7 @@ class FileClassifierApp(QMainWindow):
         self.clear_btn.clicked.connect(self.clear_list)
         btn_layout.addWidget(self.clear_btn)
 
-        self.classify_btn = QPushButton(icon_classify, "Classify with Ollama")
+        self.classify_btn = QPushButton(icon_classify, "Classify Files")
         self.classify_btn.clicked.connect(self.classify_files)
         btn_layout.addWidget(self.classify_btn)
 
@@ -350,39 +468,93 @@ class FileClassifierApp(QMainWindow):
                 geometry = f.read()
                 self.restoreGeometry(geometry)
 
+    def on_provider_changed(self):
+        """Handle provider selection change"""
+        provider = self.provider_dropdown.currentText()
+        if provider == "Ollama":
+            self.ollama_settings.setVisible(True)
+            self.openrouter_settings.setVisible(False)
+        elif provider == "OpenRouter":
+            self.ollama_settings.setVisible(False)
+            self.openrouter_settings.setVisible(True)
+          # Clear model dropdown when provider changes
+        self.model_dropdown.clear()
+
     def fetch_models(self):
-        try:
-            proc = subprocess.run(
-                ['ollama', 'list'],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr.strip())
+        provider = self.provider_dropdown.currentText()
+        
+        if provider == "Ollama":
+            try:
+                proc = subprocess.run(
+                    ['ollama', 'list'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(proc.stderr.strip())
 
-            lines = proc.stdout.strip().splitlines()
-            models = [line.split()[0] for line in lines if line and not line.startswith("NAME")]
+                lines = proc.stdout.strip().splitlines()
+                models = [line.split()[0] for line in lines if line and not line.startswith("NAME")]
 
-            if not models:
-                models = ["No models found"]
+                if not models:
+                    models = ["No models found"]
 
-            # Set gemma3:12b as default if present
-            default_model = None
-            for i, m in enumerate(models):
-                if m.lower().replace(' ', '') == 'gemma3:12b':
-                    default_model = i
-                    break
-            self.model_dropdown.clear()
-            self.model_dropdown.addItems(models)
-            self.model_dropdown.setEditable(False)
-            if default_model is not None:
-                self.model_dropdown.setCurrentIndex(default_model)
+                # Set gemma3:12b as default if present
+                default_model = None
+                for i, m in enumerate(models):
+                    if m.lower().replace(' ', '') == 'deepseek-coder-v2:latest':
+                        default_model = i
+                        break
+                        
+                self.model_dropdown.clear()
+                self.model_dropdown.addItems(models)
+                self.model_dropdown.setEditable(False)
+                if default_model is not None:
+                    self.model_dropdown.setCurrentIndex(default_model)
 
-        except Exception as e:
-            self.model_dropdown.clear()
-            self.model_dropdown.addItem("Error fetching models")
-            self.output_box.append(f"Failed to fetch models: {e}")
+            except Exception as e:
+                self.model_dropdown.clear()
+                self.model_dropdown.addItem("Error fetching models")
+                self.output_box.append(f"Failed to fetch Ollama models: {e}")
+                
+        elif provider == "OpenRouter":
+            try:
+                # For OpenRouter, we use the predefined model list
+                self.model_dropdown.clear()
+                self.model_dropdown.addItems(OPENROUTER_MODELS)
+                self.model_dropdown.setEditable(False)
+                # Set Claude 3.5 Sonnet as default
+                default_index = 0  # First item (Claude 3.5 Sonnet)
+                self.model_dropdown.setCurrentIndex(default_index)
+                self.output_box.append("OpenRouter models loaded successfully.")
+                
+            except Exception as e:
+                self.model_dropdown.clear()
+                self.model_dropdown.addItem("Error loading OpenRouter models")
+                self.output_box.append(f"Failed to load OpenRouter models: {e}")
+
+    def get_llm_instance(self):
+        """Get the appropriate LLM instance based on selected provider"""
+        provider = self.provider_dropdown.currentText()
+        model_name = self.model_dropdown.currentText()
+        
+        if not model_name or model_name.startswith("Error") or model_name == "No models found":
+            raise ValueError("No valid model selected")
+            
+        if provider == "Ollama":
+            ollama_url = self.ollama_url_input.text().strip()
+            if not ollama_url:
+                raise ValueError("Please enter a valid Ollama server URL")
+            return OllamaLLM(model=model_name, base_url=ollama_url)
+            
+        elif provider == "OpenRouter":
+            api_key = self.openrouter_api_key_input.text().strip()
+            if not api_key:
+                raise ValueError("Please enter your OpenRouter API key")
+            return OpenRouterLLM(model=model_name, api_key=api_key)
+        else:
+            raise ValueError(f"Unknown provider: {provider}")
 
     def add_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Files")
@@ -517,34 +689,36 @@ class FileClassifierApp(QMainWindow):
         if os.path.isdir(project_root):
             project_structure = self.get_folder_structure(project_root)
         else:
-            project_structure = "(Project folder does not exist or is not accessible)"
-        # Select prompt template based on structure selection and replace placeholders
+            project_structure = "(Project folder does not exist or is not accessible)"        # Select prompt template based on structure selection and replace placeholders
         structure_choice = self.structure_dropdown.currentText()
         if structure_choice == "KENT":
             prompt = PROMPT_TEMPLATE_KENT.replace('{file_list}', formatted_filenames).replace('{project_root}', project_root).replace('{project_structure}', project_structure)
         else:
             prompt = PROMPT_TEMPLATE_SPHERE.replace('{file_list}', formatted_filenames).replace('{project_root}', project_root).replace('{project_structure}', project_structure)
 
-        model_name = self.model_dropdown.currentText()
-        if not model_name or model_name.startswith("Error") or model_name == "No models found":
-            self.output_box.append("Error: No valid Ollama model selected.")
-            return
-
-        # Get Ollama server URL from input
-        ollama_url = self.ollama_url_input.text().strip()
-        if not ollama_url:
-            self.output_box.append("Error: Please enter a valid Ollama server URL.")
-            return
-
         try:
+            # Get LLM instance based on selected provider
+            llm = self.get_llm_instance()
+            provider = self.provider_dropdown.currentText()
+            
             # Debug information
-            print(f"Debug: Model Name: {model_name}")
+            print(f"Debug: Provider: {provider}")
+            print(f"Debug: Model Name: {self.model_dropdown.currentText()}")
             print(f"Debug: Structure: {structure_choice}")
-            print(f"Debug: Ollama URL: {ollama_url}")
             print(f"Debug: Prompt: {prompt}")
             print(f"Debug: Project Folder: {project_root}")
 
-            llm = OllamaLLM(model=model_name, base_url=ollama_url)
+            response = llm.invoke(prompt)
+            llm = self.get_llm_instance()
+            provider = self.provider_dropdown.currentText()
+            
+            # Debug information
+            print(f"Debug: Provider: {provider}")
+            print(f"Debug: Model Name: {self.model_dropdown.currentText()}")
+            print(f"Debug: Structure: {structure_choice}")
+            print(f"Debug: Prompt: {prompt}")
+            print(f"Debug: Project Folder: {project_root}")
+
             response = llm.invoke(prompt)
 
             print(f"Debug: Response received: {response}")
@@ -568,22 +742,24 @@ class FileClassifierApp(QMainWindow):
                     self.results_table.setItem(row, 1, QTableWidgetItem(full_path))
                     # Add a checkbox for selection
                     checkbox = QCheckBox()
-                    self.results_table.setCellWidget(row, 2, checkbox)
-                # Auto-resize columns to fit content after populating
+                    self.results_table.setCellWidget(row, 2, checkbox)                # Auto-resize columns to fit content after populating
                 self.results_table.resizeColumnsToContents()
             else:
-                self.output_box.append("Error: No JSON found in Ollama response.\nRaw response:\n" + response)
+                self.output_box.append("Error: No JSON found in AI response.\nRaw response:\n" + response)
 
+        except ValueError as e:
+            # This catches our custom validation errors from get_llm_instance
+            self.output_box.append(f"Configuration Error: {e}")
         except subprocess.TimeoutExpired:
-            self.output_box.append("Error: The request to Ollama timed out.")
+            self.output_box.append("Error: The request timed out.")
         except subprocess.CalledProcessError as e:
             print(f"Debug: CalledProcessError: {e}")
-            self.output_box.append(f"Error calling Ollama via LangChain: {e}")
+            self.output_box.append(f"Error calling AI service: {e}")
         except json.JSONDecodeError as e:
-            self.output_box.append(f"Error: Failed to parse the response from Ollama.\nRaw response:\n{response}")
+            self.output_box.append(f"Error: Failed to parse the response from AI service.\nRaw response:\n{response}")
         except Exception as e:
             print(f"Debug: General Exception: {e}")
-            self.output_box.append(f"Error calling Ollama via LangChain: {e}")
+            self.output_box.append(f"Error calling AI service: {e}")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -754,8 +930,7 @@ class FileClassifierApp(QMainWindow):
         for i in range(self.file_list_widget.count()):
             item_text = self.file_list_widget.item(i).text()
             if os.path.basename(item_text) == fname:
-                return item_text
-        # If not found, try current working directory
+                return item_text        # If not found, try current working directory
         if os.path.exists(fname):
             return os.path.abspath(fname)
         return None
@@ -779,7 +954,7 @@ class FileClassifierApp(QMainWindow):
         with open(self.settings_geometry_path, 'wb') as f:
             f.write(self.saveGeometry())
         event.accept()
-
+    
     def send_chat_message(self):
         user_msg = self.chat_input.text().strip()
         if not user_msg:
@@ -787,13 +962,15 @@ class FileClassifierApp(QMainWindow):
         mode = self.chat_mode_dropdown.currentText().lower()
         self.chat_history.append(f"<b>You:</b> {user_msg}")
         self.chat_input.clear()
-        model_name = self.model_dropdown.currentText()
-        ollama_url = self.ollama_url_input.text().strip()
-        if not model_name or not ollama_url or model_name.startswith("Error") or model_name == "No models found":
-            self.chat_history.append("<span style='color:red'>Error: No valid model or server URL.</span>")
-            return
+        
         try:
-            llm = OllamaLLM(model=model_name, base_url=ollama_url)
+            # Get LLM instance based on selected provider
+            llm = self.get_llm_instance()
+        except ValueError as e:
+            self.chat_history.append(f"<span style='color:red'>Configuration Error: {e}</span>")
+            return
+            
+        try:
             if mode == "chat":
                 response = llm.invoke(user_msg)
                 self.chat_history.append(f"<b>Model:</b> {response}")
@@ -859,8 +1036,7 @@ class FileClassifierApp(QMainWindow):
                         self.chat_history.append("<span style='color:green'>Results table updated with new destinations.</span>")
                     except Exception as e:
                         self.chat_history.append(f"<span style='color:red'>Error parsing model response as JSON: {e}</span>")
-                else:
-                    self.chat_history.append("<span style='color:orange'>No JSON mapping found in model response. No changes made to results table.</span>")
+                else:                    self.chat_history.append("<span style='color:orange'>No JSON mapping found in model response. No changes made to results table.</span>")
         except Exception as e:
             self.chat_history.append(f"<span style='color:red'>Error: {e}</span>")
 
@@ -873,12 +1049,8 @@ class FileClassifierApp(QMainWindow):
         feedback, ok = QInputDialog.getMultiLineText(self, "Refine Results", "Enter your feedback or corrections for the selected files:\n(Example: 'Move shot01.exr to /new/path', 'shot02.mov should be in /assets', etc.)")
         if not ok or not feedback.strip():
             return
-        # Prepare prompt for refinement
-        model_name = self.model_dropdown.currentText()
-        ollama_url = self.ollama_url_input.text().strip()
-        if not model_name or not ollama_url or model_name.startswith("Error") or model_name == "No models found":
-            self.output_box.append("Error: No valid Ollama model selected.")
-            return        # Format selected files for prompt
+            
+        # Format selected files for prompt
         project_root = self.project_folder_input.text().strip()
         file_lines = [f"{src} -> {os.path.relpath(dst, project_root)}" for src, dst in selected]
         files_str = "\n".join(file_lines)
@@ -893,8 +1065,10 @@ class FileClassifierApp(QMainWindow):
         with open(os.path.join(os.path.dirname(__file__), 'prompt_refine.md'), 'r', encoding='utf-8') as f:
             prompt_template = f.read()
         prompt = prompt_template.replace('{selected_files}', files_str).replace('{user_feedback}', feedback).replace('{project_structure}', project_structure)
+        
         try:
-            llm = OllamaLLM(model=model_name, base_url=ollama_url)
+            # Get LLM instance based on selected provider
+            llm = self.get_llm_instance()
             response = llm.invoke(prompt)
             self.output_box.append("<b>Refined Results:</b>")
             self.output_box.append(response)
@@ -934,6 +1108,73 @@ class FileClassifierApp(QMainWindow):
                 self.output_box.append("<span style='color:orange'>No JSON mapping found in model response. No changes made to results table.</span>")
         except Exception as e:
             self.output_box.append(f"Error refining results: {e}")
+
+    def load_openrouter_key(self):
+        """Load OpenRouter API key from secure storage"""
+        if not SECURE_STORAGE_AVAILABLE:
+            QMessageBox.warning(self, "Secure Storage Unavailable", 
+                              "Please install the 'cryptography' package to use encrypted key storage.")
+            return
+            
+        password, ok = QInputDialog.getText(self, "Load API Key", 
+                                          "Enter master password:", 
+                                          QLineEdit.Password)
+        if not ok or not password:
+            return
+            
+        try:
+            storage = SecureStorage()
+            api_key = storage.load_api_key("openrouter", password)
+            
+            if api_key:
+                self.openrouter_api_key_input.setText(api_key)
+                self.output_box.append("✅ OpenRouter API key loaded successfully.")
+            else:
+                QMessageBox.information(self, "No Key Found", 
+                                      "No stored API key found or incorrect password.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load API key: {e}")
+    
+    def save_openrouter_key(self):
+        """Save OpenRouter API key to secure storage"""
+        if not SECURE_STORAGE_AVAILABLE:
+            QMessageBox.warning(self, "Secure Storage Unavailable", 
+                              "Please install the 'cryptography' package to use encrypted key storage.")
+            return
+            
+        api_key = self.openrouter_api_key_input.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "No API Key", "Please enter an API key first.")
+            return
+            
+        password, ok = QInputDialog.getText(self, "Save API Key", 
+                                          "Enter master password to encrypt the key:", 
+                                          QLineEdit.Password)
+        if not ok or not password:
+            return
+            
+        # Confirm password
+        confirm_password, ok = QInputDialog.getText(self, "Confirm Password", 
+                                                  "Confirm master password:", 
+                                                  QLineEdit.Password)
+        if not ok or password != confirm_password:
+            QMessageBox.warning(self, "Password Mismatch", "Passwords do not match.")
+            return
+            
+        try:
+            storage = SecureStorage()
+            success = storage.save_api_key("openrouter", api_key, password)
+            
+            if success:
+                self.output_box.append("✅ OpenRouter API key saved securely.")
+                QMessageBox.information(self, "Success", 
+                                      "API key has been encrypted and saved securely.")
+            else:
+                QMessageBox.critical(self, "Error", "Failed to save API key.")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save API key: {e}")
 
 def main():
     app = QApplication(sys.argv)
