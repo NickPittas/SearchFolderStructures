@@ -825,22 +825,40 @@ class FileClassifierApp(QMainWindow):
                     except Exception as e:
                         self.output_box.append(f"[DEBUG] Exception in json.loads (regex-extracted): {e}\nJSON string was:\n{json_str}")
                 else:
-                    self.output_box.append(f"[DEBUG] Regex failed to match JSON. Attempting to parse full response as JSON.")
-                    # Remove Markdown code block markers if present
+                    self.output_box.append(f"[DEBUG] Regex failed to match JSON. Attempting to extract JSON code block.")
                     cleaned_response = response.strip()
-                    if cleaned_response.startswith('```'):
-                        # Remove the first line (```json or ```
-                        cleaned_response = '\n'.join(cleaned_response.splitlines()[1:])
-                    if cleaned_response.endswith('```'):
-                        # Remove the last line if it's just ```
-                        cleaned_response = '\n'.join(cleaned_response.splitlines()[:-1])
-                    cleaned_response = cleaned_response.strip()
-                    try:
-                        classification = json.loads(cleaned_response)
-                        json_str = cleaned_response
-                        self.output_box.append(f"[DEBUG] Successfully parsed cleaned response as JSON.")
-                    except Exception as e:
-                        self.output_box.append(f"[DEBUG] Exception in json.loads (cleaned response): {e}\nCleaned response was:\n{cleaned_response}")
+                    json_block = None
+                    lines = cleaned_response.splitlines()
+                    start_idx = None
+                    end_idx = None
+                    # Find code block with ```json or ```
+                    for i, line in enumerate(lines):
+                        if line.strip().startswith('```json') or line.strip() == '```':
+                            start_idx = i
+                            break
+                    if start_idx is not None:
+                        # Find the next ``` after start_idx
+                        for j in range(start_idx + 1, len(lines)):
+                            if lines[j].strip() == '```':
+                                end_idx = j
+                                break
+                        if end_idx is not None:
+                            json_block = '\n'.join(lines[start_idx + 1:end_idx]).strip()
+                    # Fallback: try to extract from first { to last }
+                    if not json_block:
+                        json_start = cleaned_response.find('{')
+                        json_end = cleaned_response.rfind('}')
+                        if json_start != -1 and json_end != -1 and json_end > json_start:
+                            json_block = cleaned_response[json_start:json_end+1]
+                    if json_block:
+                        try:
+                            classification = json.loads(json_block)
+                            json_str = json_block
+                            self.output_box.append(f"[DEBUG] Successfully parsed extracted JSON block.")
+                        except Exception as e:
+                            self.output_box.append(f"[DEBUG] Exception in json.loads (extracted block): {e}\nExtracted block was:\n{json_block}")
+                    else:
+                        self.output_box.append(f"[DEBUG] Could not find a JSON block in the response.")
                 if classification and isinstance(classification, dict):
                     for fname, folder in classification.items():
                         # Find the full path for the file in this batch
