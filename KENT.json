@@ -1,0 +1,94 @@
+{
+  // Root object containing all categorized files and folders
+  "Files": {
+    // 2D assets such as illustrations, images, and storyboards
+    "2D": { 
+      "_description": "2D assets such as illustrations, images, and storyboards",
+      "Illustrations": {
+        "_description": "Hand-drawn or digital illustrations"
+      },
+      "Images": {
+        "_description": "General images and reference pictures"
+      },
+      "Storyboard": {
+        "_description": "Storyboard frames and sequences"
+      }
+    },
+    // 3D assets including models, renders, and textures
+    "3D": {
+      "_description": "3D assets including models, renders, and textures",
+      "Models": {
+        "_description": "3D model files (e.g., .obj, .fbx)"
+      },
+      "Previz": {
+        "_description": "Previsualization files and scenes"
+      },
+      "Renders": {
+        "_description": "Rendered images or animations from 3D"
+      },
+      "Textures": {
+        "_description": "Texture maps for 3D models"
+      }
+    },
+    // Audio files such as music, sound effects, and dialogue
+    "Audio": {
+      "_description": "Audio files such as music, sound effects, and dialogue"
+    },
+    // Deliverables for client or review
+    "Deliverables": {
+      "_description": "Deliverables for client or review",
+      "Finals": {
+        "_description": "Final approved deliverables"
+      },
+      "Review": {
+        "_description": "Files for review or feedback"
+      }
+    },
+    // Documents such as scripts, notes, and spreadsheets
+    "Documents": {
+      "_description": "Documents such as scripts, notes, and spreadsheets"
+    },
+    // Project files for various software
+    "Projects": {
+      "_description": "Project files for various software",
+      "AfterEffects": {
+        "_description": "Adobe After Effects project files"
+      },
+      "Davinci": {
+        "_description": "DaVinci Resolve project files"
+      },
+      "Nuke": {
+        "_description": "Foundry Nuke project files"
+      },
+      "Premiere": {
+        "_description": "Adobe Premiere project files"
+      },
+      "Tracking": {
+        "_description": "Tracking data and project files"
+      }
+    },
+    // Renders from compositing or motion graphics
+    "Renders": {
+      "_description": "Renders from compositing or motion graphics",
+      "AE": {
+        "_description": "Renders from After Effects"
+      },
+      "Nuke": {
+        "_description": "Renders from Nuke"
+      }
+    },
+    // Video files and related assets
+    "Video": {
+      "_description": "Video files and related assets",
+      "Footage": {
+        "_description": "Raw or edited video footage"
+      },
+      "Guides": {
+        "_description": "Guide videos or reference edits"
+      },
+      "XML-EDL-AAF": {
+        "_description": "Edit decision lists and interchange formats"
+      }
+    }
+  }
+}

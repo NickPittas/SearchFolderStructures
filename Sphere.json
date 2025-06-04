@@ -1,0 +1,74 @@
+{
+  "01_plates": {
+    "_description": "Raw or source plates for the project"
+  },
+  "02_support": {
+    "_description": "Support files (could include LUTs, reference, etc.)"
+  },
+  "03_references": {
+    "_description": "Reference materials for the project",
+    "audio": {
+      "_description": "Reference audio files"
+    },
+    "artwork": {
+      "_description": "Reference artwork"
+    },
+    "style_guides": {
+      "_description": "Style guides for the project"
+    },
+    "client_brief": {
+      "_description": "Client brief documents or files"
+    }
+  },
+  "04_vfx": {
+    "_description": "VFX work per shot",
+    "<shot_name>": {
+      "_description": "VFX shot folder (replace <shot_name> with actual shot)",
+      "project": {
+        "_description": "VFX project files for the shot"
+      },
+      "render": {
+        "_description": "VFX renders for the shot"
+      }
+    }
+  },
+  "05_comp": {
+    "_description": "Compositing work per shot",
+    "<shot_name>": {
+      "_description": "Compositing shot folder (replace <shot_name> with actual shot)",
+      "project": {
+        "_description": "Compositing project files for the shot"
+      },
+      "render": {
+        "_description": "Compositing renders for the shot"
+      }
+    }
+  },
+  "06_mograph": {
+    "_description": "Motion graphics renders",
+    "render": {
+      "_description": "Motion graphics renders"
+    }
+  },
+  "07_shared": {
+    "_description": "Shared assets for the project",
+    "fonts": {
+      "_description": "Shared fonts"
+    },
+    "graphics": {
+      "_description": "Shared graphics"
+    },
+    "stock_footage": {
+      "_description": "Shared stock footage"
+    },
+    "templates": {
+      "_description": "Shared templates"
+    }
+  },
+  "08_output": {
+    "_description": "Final output renders",
+    "render": {
+      "_description": "Final output renders"
+    }
+  }
+}
