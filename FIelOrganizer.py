@@ -50,6 +50,14 @@ OPENROUTER_MODELS = [
     "deepseek/deepseek-chat"
 ]
 
+# Mistral models for dropdown selection
+MISTRAL_MODELS = [
+    "mistral-tiny",
+    "mistral-small",
+    "mistral-medium",
+    "mistral-large-latest"
+]
+
 class OpenRouterLLM:
     """Simple OpenRouter API wrapper for compatibility with Ollama interface"""
     
@@ -84,6 +92,31 @@ class OpenRouterLLM:
             raise Exception(f"OpenRouter API Error: {e}")
         except KeyError as e:
             raise Exception(f"Unexpected response format from OpenRouter: {e}")
+
+# Mistral models for dropdown selection
+class MistralLLM:
+    """Simple Mistral API wrapper for compatibility with Ollama/OpenRouter interface"""
+    def __init__(self, model, api_key):
+        self.model = model
+        self.api_key = api_key
+        self.base_url = "https://api.mistral.ai/v1/chat/completions"
+
+    def invoke(self, prompt):
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+        response = requests.post(self.base_url, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        # Mistral returns choices[0]['message']['content']
+        return result['choices'][0]['message']['content']
 
 # Load prompt templates from Markdown files
 
@@ -290,7 +323,7 @@ class FileClassifierApp(QMainWindow):
         provider_row = QHBoxLayout()
         provider_row.addWidget(QLabel("Provider:"))
         self.provider_dropdown = QComboBox()
-        self.provider_dropdown.addItems(["Ollama", "OpenRouter"])
+        self.provider_dropdown.addItems(["Ollama", "OpenRouter", "Mistral"])
         self.provider_dropdown.currentTextChanged.connect(self.on_provider_changed)
         provider_row.addWidget(self.provider_dropdown)
         ai_setup_layout.addLayout(provider_row)
@@ -345,6 +378,18 @@ class FileClassifierApp(QMainWindow):
         self.openrouter_settings.setLayout(openrouter_layout)
         self.openrouter_settings.setVisible(False)  # Initially hidden
         ai_setup_layout.addWidget(self.openrouter_settings)
+        
+        # Mistral specific settings
+        self.mistral_settings = QWidget()
+        mistral_layout = QVBoxLayout()
+        mistral_layout.addWidget(QLabel("Mistral API Key:"))
+        self.mistral_api_key_input = QLineEdit()
+        self.mistral_api_key_input.setEchoMode(QLineEdit.Password)
+        self.mistral_api_key_input.setPlaceholderText("Enter your Mistral API key")
+        mistral_layout.addWidget(self.mistral_api_key_input)
+        self.mistral_settings.setLayout(mistral_layout)
+        self.mistral_settings.setVisible(False)
+        ai_setup_layout.addWidget(self.mistral_settings)
         
         # Fetch models button
         self.fetch_models_btn = QPushButton("Fetch Models")
@@ -448,6 +493,7 @@ class FileClassifierApp(QMainWindow):
         self.results_table.setHorizontalHeaderLabels(["Source File", "Destination Path", "Select"])
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results_table.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.results_table.setSortingEnabled(True)  # Enable sorting
         # Connect row click to toggle checkbox
         self.results_table.itemClicked.connect(self.on_results_table_item_clicked)
         # Set column resize modes: Source and Destination user-resizable, Select fixed
@@ -557,6 +603,31 @@ class FileClassifierApp(QMainWindow):
 
         # Store OpenRouter password in memory for session
         self._openrouter_password = None
+        # Store Mistral password in memory for session
+        self._mistral_password = None
+        # Path for persistent Mistral key storage
+        self.mistral_key_path = os.path.join(os.path.expanduser('~'), 'FIelOrganizer_mistral_key.dat')
+
+        # Connect Mistral API key input to update in-memory key and save
+        self.mistral_api_key_input.textChanged.connect(self.on_mistral_api_key_changed)
+
+        # Add Load/Save buttons for Mistral key
+        mistral_api_key_row = QHBoxLayout()
+        mistral_api_key_row.addWidget(self.mistral_api_key_input)
+        self.load_mistral_key_btn = QPushButton("Load")
+        self.load_mistral_key_btn.setMaximumWidth(60)
+        self.load_mistral_key_btn.clicked.connect(self.load_mistral_key)
+        mistral_api_key_row.addWidget(self.load_mistral_key_btn)
+        self.save_mistral_key_btn = QPushButton("Save")
+        self.save_mistral_key_btn.setMaximumWidth(60)
+        self.save_mistral_key_btn.clicked.connect(self.save_mistral_key)
+        mistral_api_key_row.addWidget(self.save_mistral_key_btn)
+        # Insert the row into the Mistral settings layout
+        mistral_layout = self.mistral_settings.layout()
+        mistral_layout.addLayout(mistral_api_key_row)
+
+        # Load Mistral key on startup if available
+        self.load_mistral_key()
 
     def on_provider_changed(self):
         """Handle provider selection change"""
@@ -564,11 +635,25 @@ class FileClassifierApp(QMainWindow):
         if provider == "Ollama":
             self.ollama_settings.setVisible(True)
             self.openrouter_settings.setVisible(False)
+            self.mistral_settings.setVisible(False)
         elif provider == "OpenRouter":
             self.ollama_settings.setVisible(False)
             self.openrouter_settings.setVisible(True)
-          # Clear model dropdown when provider changes
+            self.mistral_settings.setVisible(False)
+        elif provider == "Mistral":
+            self.ollama_settings.setVisible(False)
+            self.openrouter_settings.setVisible(False)
+            self.mistral_settings.setVisible(True)
+            # Restore Mistral API key from memory if available
+            if self._mistral_password is not None:
+                self.mistral_api_key_input.setText(self._mistral_password)
+        # Clear model dropdown when provider changes
         self.model_dropdown.clear()
+
+    def on_mistral_api_key_changed(self, text):
+        self._mistral_password = text
+        # Save key on change
+        self.save_mistral_key()
 
     def fetch_models(self):
         provider = self.provider_dropdown.currentText()
@@ -623,26 +708,43 @@ class FileClassifierApp(QMainWindow):
                 self.model_dropdown.clear()
                 self.model_dropdown.addItem("Error loading OpenRouter models")
                 self.output_box.append(f"Failed to load OpenRouter models: {e}")
+        elif provider == "Mistral":
+            try:
+                self.model_dropdown.clear()
+                self.model_dropdown.addItems(MISTRAL_MODELS)
+                self.model_dropdown.setEditable(False)
+                self.model_dropdown.setCurrentIndex(0)
+                self.output_box.append("Mistral models loaded successfully.")
+            except Exception as e:
+                self.model_dropdown.clear()
+                self.model_dropdown.addItem("Error loading Mistral models")
+                self.output_box.append(f"Failed to load Mistral models: {e}")
 
     def get_llm_instance(self):
         """Get the appropriate LLM instance based on selected provider"""
         provider = self.provider_dropdown.currentText()
         model_name = self.model_dropdown.currentText()
-        
         if not model_name or model_name.startswith("Error") or model_name == "No models found":
             raise ValueError("No valid model selected")
-            
         if provider == "Ollama":
             ollama_url = self.ollama_url_input.text().strip()
             if not ollama_url:
                 raise ValueError("Please enter a valid Ollama server URL")
             return OllamaLLM(model=model_name, base_url=ollama_url)
-            
         elif provider == "OpenRouter":
             api_key = self.openrouter_api_key_input.text().strip()
             if not api_key:
                 raise ValueError("Please enter your OpenRouter API key")
+            # Store in-memory for session
+            self._openrouter_password = api_key
             return OpenRouterLLM(model=model_name, api_key=api_key)
+        elif provider == "Mistral":
+            # Use in-memory key if available
+            api_key = self._mistral_password if self._mistral_password is not None else self.mistral_api_key_input.text().strip()
+            if not api_key:
+                raise ValueError("Please enter your Mistral API key")
+            self._mistral_password = api_key
+            return MistralLLM(model=model_name, api_key=api_key)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -785,6 +887,7 @@ class FileClassifierApp(QMainWindow):
         processed_files = 0
         self.results_table.setRowCount(0)  # Clear previous results
 
+        all_results = []  # Collect (src, dst) tuples for all batches
         for batch_idx in range(num_batches):
             batch_files = valid_files[batch_idx * batch_size : (batch_idx + 1) * batch_size]
             formatted_filenames = "\n".join([os.path.basename(f) for f in batch_files])
@@ -861,24 +964,26 @@ class FileClassifierApp(QMainWindow):
                         self.output_box.append(f"[DEBUG] Could not find a JSON block in the response.")
                 if classification and isinstance(classification, dict):
                     for fname, folder in classification.items():
-                        # Find the full path for the file in this batch
+                        # Try to find the full path for the file in this batch
                         full_src_path = None
                         for f in batch_files:
                             if os.path.basename(f) == fname:
                                 full_src_path = f
                                 break
+                        # If not found in batch, try all files in the list
                         if not full_src_path:
-                            full_src_path = fname  # fallback
+                            for f in self.get_all_files():
+                                if os.path.basename(f) == fname:
+                                    full_src_path = f
+                                    break
+                        # If still not found, just use the filename (AI may hallucinate extra files)
+                        if not full_src_path:
+                            full_src_path = fname
                         full_path = os.path.join(project_root, folder.lstrip('/'))
                         full_destination = os.path.join(full_path, fname)
                         full_destination = os.path.normpath(full_destination).replace('\\', '/')
                         self.output_box.append(f"{full_src_path} -> {full_destination}")
-                        row = self.results_table.rowCount()
-                        self.results_table.insertRow(row)
-                        self.results_table.setItem(row, 0, QTableWidgetItem(full_src_path))
-                        self.results_table.setItem(row, 1, QTableWidgetItem(full_destination))
-                        checkbox = QCheckBox()
-                        self.results_table.setCellWidget(row, 2, checkbox)
+                        all_results.append((full_src_path, full_destination))
                         QApplication.processEvents()  # Update UI after each row
                 elif classification is not None:
                     self.output_box.append(f"[DEBUG] JSON loaded but not a dict. Type: {type(classification)}. Value: {classification}")
@@ -887,6 +992,16 @@ class FileClassifierApp(QMainWindow):
                 self.output_box.append(f"Error in batch {batch_idx+1}: {e}")
                 continue
 
+        # Now populate the table in one go
+        self.results_table.setSortingEnabled(False)
+        self.results_table.setRowCount(0)
+        self.results_table.setRowCount(len(all_results))
+        for row, (src, dst) in enumerate(all_results):
+            self.results_table.setItem(row, 0, QTableWidgetItem(src))
+            self.results_table.setItem(row, 1, QTableWidgetItem(dst))
+            checkbox = QCheckBox()
+            self.results_table.setCellWidget(row, 2, checkbox)
+        self.results_table.setSortingEnabled(True)
         self.results_table.resizeColumnsToContents()
         self.progress_bar.setValue(100)
         self.progress_bar.setVisible(False)
@@ -1400,6 +1515,24 @@ class FileClassifierApp(QMainWindow):
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save API key: {e}")
+
+    def save_mistral_key(self):
+        key = self.mistral_api_key_input.text().strip()
+        try:
+            with open(self.mistral_key_path, 'w', encoding='utf-8') as f:
+                f.write(key)
+        except Exception as e:
+            self.output_box.append(f"[DEBUG] Failed to save Mistral API key: {e}")
+
+    def load_mistral_key(self):
+        try:
+            if os.path.exists(self.mistral_key_path):
+                with open(self.mistral_key_path, 'r', encoding='utf-8') as f:
+                    key = f.read().strip()
+                    self._mistral_password = key
+                    self.mistral_api_key_input.setText(key)
+        except Exception as e:
+            self.output_box.append(f"[DEBUG] Failed to load Mistral API key: {e}")
 
     def remove_selected_files(self):
         """Remove selected files from the file_list_widget."""
