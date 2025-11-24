@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon, QPalette, QColor
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_ollama.llms import OllamaLLM
 
 # Import secure storage
@@ -92,6 +92,38 @@ class OpenRouterLLM:
             raise Exception(f"OpenRouter API Error: {e}")
         except KeyError as e:
             raise Exception(f"Unexpected response format from OpenRouter: {e}")
+
+# LM Studio API wrapper
+class LMStudioLLM:
+    """LM Studio API wrapper for compatibility with Ollama/OpenRouter interface"""
+
+    def __init__(self, model, base_url="http://localhost:1234/v1"):
+        self.model = model
+        self.base_url = base_url.rstrip('/') + '/chat/completions'
+
+    def invoke(self, prompt):
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": self.model,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4000
+        }
+
+        try:
+            response = requests.post(self.base_url, headers=headers, json=data, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"LM Studio API Error: {e}")
+        except KeyError as e:
+            raise Exception(f"Unexpected response format from LM Studio: {e}")
 
 # Mistral models for dropdown selection
 class MistralLLM:
@@ -323,7 +355,7 @@ class FileClassifierApp(QMainWindow):
         provider_row = QHBoxLayout()
         provider_row.addWidget(QLabel("Provider:"))
         self.provider_dropdown = QComboBox()
-        self.provider_dropdown.addItems(["Ollama", "OpenRouter", "Mistral"])
+        self.provider_dropdown.addItems(["Ollama", "OpenRouter", "Mistral", "LM Studio"])
         self.provider_dropdown.currentTextChanged.connect(self.on_provider_changed)
         provider_row.addWidget(self.provider_dropdown)
         ai_setup_layout.addLayout(provider_row)
@@ -390,7 +422,17 @@ class FileClassifierApp(QMainWindow):
         self.mistral_settings.setLayout(mistral_layout)
         self.mistral_settings.setVisible(False)
         ai_setup_layout.addWidget(self.mistral_settings)
-        
+
+        # LM Studio specific settings
+        self.lmstudio_settings = QWidget()
+        lmstudio_layout = QVBoxLayout()
+        lmstudio_layout.addWidget(QLabel("LM Studio Server URL:"))
+        self.lmstudio_url_input = QLineEdit("http://localhost:1234/v1")
+        lmstudio_layout.addWidget(self.lmstudio_url_input)
+        self.lmstudio_settings.setLayout(lmstudio_layout)
+        self.lmstudio_settings.setVisible(False)  # Initially hidden
+        ai_setup_layout.addWidget(self.lmstudio_settings)
+
         # Fetch models button
         self.fetch_models_btn = QPushButton("Fetch Models")
         self.fetch_models_btn.clicked.connect(self.fetch_models)
@@ -636,17 +678,25 @@ class FileClassifierApp(QMainWindow):
             self.ollama_settings.setVisible(True)
             self.openrouter_settings.setVisible(False)
             self.mistral_settings.setVisible(False)
+            self.lmstudio_settings.setVisible(False)
         elif provider == "OpenRouter":
             self.ollama_settings.setVisible(False)
             self.openrouter_settings.setVisible(True)
             self.mistral_settings.setVisible(False)
+            self.lmstudio_settings.setVisible(False)
         elif provider == "Mistral":
             self.ollama_settings.setVisible(False)
             self.openrouter_settings.setVisible(False)
             self.mistral_settings.setVisible(True)
+            self.lmstudio_settings.setVisible(False)
             # Restore Mistral API key from memory if available
             if self._mistral_password is not None:
                 self.mistral_api_key_input.setText(self._mistral_password)
+        elif provider == "LM Studio":
+            self.ollama_settings.setVisible(False)
+            self.openrouter_settings.setVisible(False)
+            self.mistral_settings.setVisible(False)
+            self.lmstudio_settings.setVisible(True)
         # Clear model dropdown when provider changes
         self.model_dropdown.clear()
 
@@ -719,6 +769,35 @@ class FileClassifierApp(QMainWindow):
                 self.model_dropdown.clear()
                 self.model_dropdown.addItem("Error loading Mistral models")
                 self.output_box.append(f"Failed to load Mistral models: {e}")
+        elif provider == "LM Studio":
+            try:
+                lmstudio_url = self.lmstudio_url_input.text().strip()
+                if not lmstudio_url:
+                    raise ValueError("Please enter a valid LM Studio server URL")
+
+                # Fetch models from LM Studio API
+                models_url = lmstudio_url.rstrip('/') + '/models'
+                response = requests.get(models_url, timeout=5)
+                response.raise_for_status()
+                result = response.json()
+
+                # Extract model IDs from the response
+                models = [model['id'] for model in result.get('data', [])]
+
+                if not models:
+                    models = ["No models found"]
+
+                self.model_dropdown.clear()
+                self.model_dropdown.addItems(models)
+                self.model_dropdown.setEditable(False)
+                if models and models[0] != "No models found":
+                    self.model_dropdown.setCurrentIndex(0)
+                self.output_box.append(f"LM Studio models loaded successfully. Found {len(models)} model(s).")
+
+            except Exception as e:
+                self.model_dropdown.clear()
+                self.model_dropdown.addItem("Error fetching models")
+                self.output_box.append(f"Failed to fetch LM Studio models: {e}")
 
     def get_llm_instance(self):
         """Get the appropriate LLM instance based on selected provider"""
@@ -745,6 +824,11 @@ class FileClassifierApp(QMainWindow):
                 raise ValueError("Please enter your Mistral API key")
             self._mistral_password = api_key
             return MistralLLM(model=model_name, api_key=api_key)
+        elif provider == "LM Studio":
+            lmstudio_url = self.lmstudio_url_input.text().strip()
+            if not lmstudio_url:
+                raise ValueError("Please enter a valid LM Studio server URL")
+            return LMStudioLLM(model=model_name, base_url=lmstudio_url)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 

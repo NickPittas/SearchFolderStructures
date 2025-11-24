@@ -17,9 +17,9 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
 from PyQt5.QtGui import QIcon, QPalette, QColor
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_ollama.llms import OllamaLLM
-from FIelOrganizer import OpenRouterLLM, MistralLLM  # added missing imports for LLM providers
+from FIelOrganizer import OpenRouterLLM, MistralLLM, LMStudioLLM  # added missing imports for LLM providers
 
 # Import secure storage
 try:
@@ -102,7 +102,7 @@ class FileClassifierWorker(QThread):
                     break
                 batch_files = self.valid_files[batch_idx * self.batch_size : (batch_idx + 1) * self.batch_size]
                 formatted_filenames = "\n".join([os.path.basename(f) for f in batch_files])
-                percent = int((batch_idx / num_batches) * 100)
+                percent = int(((batch_idx + 1) / num_batches) * 100) if num_batches > 0 else 100
                 self.progress_update.emit(percent, f"Sending batch {batch_idx+1}/{num_batches} to AI for classification...")
                 # Get actual project structure
                 if os.path.isdir(self.project_root):
@@ -290,7 +290,6 @@ class FileClassifierApp(QMainWindow):
                 background-color: #23272a;
                 color: #ff9900;
                 border: 1px solid #ff9900;
-                font-weight: bold;
                 padding: 4px;
             }
             QCheckBox {
@@ -319,6 +318,33 @@ class FileClassifierApp(QMainWindow):
                 background-color: #ff9900;
                 color: #23272a;
             }
+
+            /* Splitter handle styling */
+            QSplitter::handle {
+                background-color: #ff9900;
+                width: 2px;
+            }
+
+            /* TreeView header styling */
+            QHeaderView::section {
+                background-color: #23272a;
+                color: #ff9900;
+                border: 1px solid #ff9900;
+                padding: 4px;
+            }
+
+            /* Table grid lines */
+            QTableView, QTableWidget {
+                gridline-color: #ff9900;
+            }
+
+            /* Plain text edit (log) styling */
+            QPlainTextEdit, QTextEdit {
+                background-color: #181a1b;
+                border: 1px solid #ff9900;
+                border-radius: 3px;
+                color: #d6d6d6;
+            }
         ''')
 
         # Icons
@@ -334,6 +360,21 @@ class FileClassifierApp(QMainWindow):
         icon_select_all = style.standardIcon(QStyle.SP_DialogApplyButton)
         icon_select_none = style.standardIcon(QStyle.SP_DialogCancelButton)
         
+        # Instantiate buttons for Selected Files panel
+        self.add_files_btn = QPushButton(icon_add, "Add Files")
+        self.add_files_btn.clicked.connect(self.add_files)
+        self.add_folder_btn = QPushButton(icon_folder, "Add Folder")
+        self.add_folder_btn.clicked.connect(self.add_folder)
+        self.clear_btn = QPushButton(icon_clear, "Clear List")
+        self.clear_btn.clicked.connect(self.clear_list)
+        self.remove_selected_btn = QPushButton(icon_select_none, "Remove Selected")
+        self.remove_selected_btn.clicked.connect(self.remove_selected_files)
+        self.classify_btn = QPushButton(icon_classify, "Classify Files")
+        self.classify_btn.clicked.connect(self.classify_files)
+        # Progress bar for classification in Selected Files panel
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+
         # Central widget and layouts
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
@@ -357,25 +398,43 @@ class FileClassifierApp(QMainWindow):
         file_browser_dock.setObjectName("FileBrowserDock")
         file_browser_dock.setWidget(self.file_browser)
         file_browser_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        file_browser_dock.setFloating(True)
+        file_browser_dock.setFloating(False)
         file_browser_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.addDockWidget(Qt.LeftDockWidgetArea, file_browser_dock)
-        
+
         # Selected files panel
         self.file_list_widget = QListWidget()
         self.file_list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.file_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.file_list_widget.customContextMenuRequested.connect(self.on_selected_files_context_menu)
-        
+        # Build composite widget for Selected Files dock
+        selected_panel = QWidget()
+        selected_layout = QVBoxLayout(selected_panel)
+        # Top buttons: Add Files, Add Folder
+        top_btn_layout = QHBoxLayout()
+        top_btn_layout.addWidget(self.add_files_btn)
+        top_btn_layout.addWidget(self.add_folder_btn)
+        selected_layout.addLayout(top_btn_layout)
+        # File list
+        selected_layout.addWidget(self.file_list_widget)
+        # Middle buttons: Clear List, Remove Selected
+        mid_btn_layout = QHBoxLayout()
+        mid_btn_layout.addWidget(self.clear_btn)
+        mid_btn_layout.addWidget(self.remove_selected_btn)
+        selected_layout.addLayout(mid_btn_layout)
+        # Progress bar for classification
+        selected_layout.addWidget(self.progress_bar)
+        # Bottom: Classify Files (larger)
+        self.classify_btn.setMinimumHeight(self.classify_btn.sizeHint().height() * 2)
+        selected_layout.addWidget(self.classify_btn)
         # Selected files dock
         selected_files_dock = QDockWidget("Selected Files", self)
         selected_files_dock.setObjectName("SelectedFilesDock")
-        selected_files_dock.setWidget(self.file_list_widget)
-        selected_files_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        selected_files_dock.setFloating(True)
-        selected_files_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
-        self.addDockWidget(Qt.LeftDockWidgetArea, selected_files_dock)
-        
+        selected_files_dock.setWidget(selected_panel)
+        selected_files_dock.setFeatures(QDockWidget.DockWidgetMovable)
+        selected_files_dock.setFloating(False)
+        self.addDockWidget(Qt.RightDockWidgetArea, selected_files_dock)
+
         # Right panel (controls)
         self.right_panel = QWidget()
         self.right_layout = QVBoxLayout(self.right_panel)
@@ -388,7 +447,7 @@ class FileClassifierApp(QMainWindow):
         provider_row = QHBoxLayout()
         provider_row.addWidget(QLabel("Provider:"))
         self.provider_dropdown = QComboBox()
-        self.provider_dropdown.addItems(["Ollama", "OpenRouter", "Mistral"])
+        self.provider_dropdown.addItems(["Ollama", "OpenRouter", "Mistral", "LM Studio"])
         self.provider_dropdown.currentTextChanged.connect(self.on_provider_changed)
         provider_row.addWidget(self.provider_dropdown)
         ai_setup_layout.addLayout(provider_row)
@@ -432,7 +491,17 @@ class FileClassifierApp(QMainWindow):
         self.mistral_settings.setLayout(mistral_layout)
         self.mistral_settings.setVisible(False)
         ai_setup_layout.addWidget(self.mistral_settings)
-        
+
+        # LM Studio specific settings
+        self.lmstudio_settings = QWidget()
+        lmstudio_layout = QVBoxLayout()
+        lmstudio_layout.addWidget(QLabel("LM Studio Server URL:"))
+        self.lmstudio_url_input = QLineEdit("http://localhost:1234/v1")
+        lmstudio_layout.addWidget(self.lmstudio_url_input)
+        self.lmstudio_settings.setLayout(lmstudio_layout)
+        self.lmstudio_settings.setVisible(False)  # Initially hidden
+        ai_setup_layout.addWidget(self.lmstudio_settings)
+
         # Fetch models button
         self.fetch_models_btn = QPushButton("Fetch Models")
         self.fetch_models_btn.clicked.connect(self.fetch_models)
@@ -461,43 +530,53 @@ class FileClassifierApp(QMainWindow):
         ai_setup_layout.addLayout(depth_row)
         
         ai_setup_group.setLayout(ai_setup_layout)
-        self.right_layout.addWidget(ai_setup_group)
+        # Create separate AI Setup dock
+        ai_setup_dock = QDockWidget("AI Setup", self)
+        ai_setup_dock.setObjectName("AISetupDock")
+        ai_setup_dock.setWidget(ai_setup_group)
+        ai_setup_dock.setFeatures(QDockWidget.DockWidgetMovable)
+        ai_setup_dock.setFloating(False)
+        self.addDockWidget(Qt.TopDockWidgetArea, ai_setup_dock)
         
-        # Structure selection dropdown
-        self.right_layout.addWidget(QLabel("Select Folder Structure:"))
+        # Create separate Project Settings panel (folder structure + destination)
+        project_settings_panel = QWidget()
+        ps_layout = QVBoxLayout(project_settings_panel)
+        ps_layout.addWidget(QLabel("Select Folder Structure:"))
         self.structure_dropdown = QComboBox()
         self.structure_dropdown.addItems(["KENT", "Sphere"])
         self.structure_dropdown.setEditable(False)
-        self.right_layout.addWidget(self.structure_dropdown)
-        
-        # Destination project folder input
-        self.right_layout.addWidget(QLabel("Destination Project Folder:"))
+        ps_layout.addWidget(self.structure_dropdown)
+        ps_layout.addWidget(QLabel("Destination Project Folder:"))
         self.project_folder_input = QLineEdit("/Files/")
-        self.right_layout.addWidget(self.project_folder_input)
+        ps_layout.addWidget(self.project_folder_input)
+        project_settings_dock = QDockWidget("Project Settings", self)
+        project_settings_dock.setObjectName("ProjectSettingsDock")
+        project_settings_dock.setWidget(project_settings_panel)
+        project_settings_dock.setFeatures(QDockWidget.DockWidgetMovable)
+        project_settings_dock.setFloating(False)
+        self.addDockWidget(Qt.TopDockWidgetArea, project_settings_dock)
         
-        # Buttons row
-        btn_layout = QHBoxLayout()
-        self.add_files_btn = QPushButton(icon_add, "Add Files")
-        self.add_files_btn.clicked.connect(self.add_files)
-        btn_layout.addWidget(self.add_files_btn)
-        
-        self.add_folder_btn = QPushButton(icon_folder, "Add Folder")
-        self.add_folder_btn.clicked.connect(self.add_folder)
-        btn_layout.addWidget(self.add_folder_btn)
-        
-        self.clear_btn = QPushButton(icon_clear, "Clear List")
-        self.clear_btn.clicked.connect(self.clear_list)
-        btn_layout.addWidget(self.clear_btn)
-        
-        self.remove_selected_btn = QPushButton("Remove Selected")
-        self.remove_selected_btn.clicked.connect(self.remove_selected_files)
-        btn_layout.addWidget(self.remove_selected_btn)
-        
-        self.classify_btn = QPushButton(icon_classify, "Classify Files")
-        self.classify_btn.clicked.connect(self.classify_files)
-        btn_layout.addWidget(self.classify_btn)
-        
-        self.right_layout.addLayout(btn_layout)
+        # --- Chat window ---
+        chat_panel = QWidget()
+        chat_layout = QVBoxLayout()
+        chat_panel.setLayout(chat_layout)
+        chat_layout.addWidget(QLabel("Chat with Model:"))
+        self.chat_history = QTextEdit()
+        self.chat_history.setReadOnly(True)
+        chat_layout.addWidget(self.chat_history)
+        chat_input_row = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_mode_dropdown = QComboBox()
+        self.chat_mode_dropdown.addItems(["Chat", "Refine"])
+        self.chat_mode_dropdown.setFixedWidth(70)
+        chat_input_row.addWidget(self.chat_mode_dropdown)
+        chat_input_row.addWidget(self.chat_input)
+        self.send_chat_btn = QPushButton("→")
+        self.send_chat_btn.setFixedWidth(32)
+        self.send_chat_btn.clicked.connect(self.send_chat_message)
+        chat_input_row.addWidget(self.send_chat_btn)
+        chat_layout.addLayout(chat_input_row)
+        self.right_layout.addWidget(chat_panel)
         
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -569,29 +648,26 @@ class FileClassifierApp(QMainWindow):
         right_panel_dock = QDockWidget("Controls", self)
         right_panel_dock.setObjectName("ControlsDock")
         right_panel_dock.setWidget(self.right_panel)
-        right_panel_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        right_panel_dock.setFloating(True)
-        right_panel_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        right_panel_dock.setFeatures(QDockWidget.DockWidgetMovable)
+        right_panel_dock.setFloating(False)
         self.addDockWidget(Qt.RightDockWidgetArea, right_panel_dock)
-        
-        # Add results panel dock
+
+        # Add results dock
         results_panel_dock = QDockWidget("Results", self)
         results_panel_dock.setObjectName("ResultsDock")
         results_panel_dock.setWidget(self.results_panel)
-        results_panel_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        results_panel_dock.setFloating(True)
-        results_panel_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        results_panel_dock.setFeatures(QDockWidget.DockWidgetMovable)
+        results_panel_dock.setFloating(False)
         self.addDockWidget(Qt.RightDockWidgetArea, results_panel_dock)
-        
+
         # Add output/log dock
         output_dock = QDockWidget("Log / Output", self)
         output_dock.setObjectName("OutputDock")
         output_dock.setWidget(self.output_box)
-        output_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        output_dock.setFloating(True)
-        output_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        output_dock.setFeatures(QDockWidget.DockWidgetMovable)
+        output_dock.setFloating(False)
         self.addDockWidget(Qt.BottomDockWidgetArea, output_dock)
-        
+
         # Set dock options
         self.setDockOptions(QMainWindow.AllowTabbedDocks | QMainWindow.AllowNestedDocks)
         
@@ -876,19 +952,18 @@ class FileClassifierApp(QMainWindow):
         
     def expand_sequence_files(self, fname):
         """Expand a sequence pattern (####) to actual file list"""
-        # Handle direct file paths
-        if os.path.isabs(fname) and os.path.exists(fname):
+        # Direct existing path
+        if os.path.exists(fname):
             return [fname]
         if '####' not in fname:
-            # Single file
+            # Single file, use find_full_path
             full_path = self.find_full_path(fname)
-            return [full_path] if full_path and isinstance(full_path, str) else []
-        
-        # Sequence file - find all matching files
+            return [full_path] if full_path and isinstance(full_path, str) and os.path.exists(full_path) else []
+        # Sequence pattern file
         full_path = self.find_full_path(fname)
         if isinstance(full_path, list):
-            return full_path
-        elif full_path:
+            return [p for p in full_path if os.path.exists(p)]
+        elif full_path and os.path.exists(full_path):
             return [full_path]
         return []
     
@@ -1038,16 +1113,24 @@ class FileClassifierApp(QMainWindow):
             self.ollama_settings.setVisible(True)
             self.openrouter_settings.setVisible(False)
             self.mistral_settings.setVisible(False)
+            self.lmstudio_settings.setVisible(False)
         elif provider == "OpenRouter":
             self.ollama_settings.setVisible(False)
             self.openrouter_settings.setVisible(True)
             self.mistral_settings.setVisible(False)
+            self.lmstudio_settings.setVisible(False)
         elif provider == "Mistral":
             self.ollama_settings.setVisible(False)
             self.openrouter_settings.setVisible(False)
             self.mistral_settings.setVisible(True)
+            self.lmstudio_settings.setVisible(False)
             if getattr(self, '_mistral_password', None) is not None:
                 self.mistral_api_key_input.setText(self._mistral_password)
+        elif provider == "LM Studio":
+            self.ollama_settings.setVisible(False)
+            self.openrouter_settings.setVisible(False)
+            self.mistral_settings.setVisible(False)
+            self.lmstudio_settings.setVisible(True)
         # Clear model dropdown when provider changes
         self.model_dropdown.clear()
         
@@ -1083,6 +1166,35 @@ class FileClassifierApp(QMainWindow):
             self.model_dropdown.clear()
             self.model_dropdown.addItems(MISTRAL_MODELS)
             self.model_dropdown.setEditable(False)
+        elif provider == "LM Studio":
+            try:
+                lmstudio_url = self.lmstudio_url_input.text().strip()
+                if not lmstudio_url:
+                    raise ValueError("Please enter a valid LM Studio server URL")
+
+                # Fetch models from LM Studio API
+                models_url = lmstudio_url.rstrip('/') + '/models'
+                response = requests.get(models_url, timeout=5)
+                response.raise_for_status()
+                result = response.json()
+
+                # Extract model IDs from the response
+                models = [model['id'] for model in result.get('data', [])]
+
+                if not models:
+                    models = ["No models found"]
+
+                self.model_dropdown.clear()
+                self.model_dropdown.addItems(models)
+                self.model_dropdown.setEditable(False)
+                if models and models[0] != "No models found":
+                    self.model_dropdown.setCurrentIndex(0)
+                self.output_box.append(f"LM Studio models loaded successfully. Found {len(models)} model(s).")
+
+            except Exception as e:
+                self.model_dropdown.clear()
+                self.model_dropdown.addItem("Error fetching models")
+                self.output_box.append(f"Failed to fetch LM Studio models: {e}")
     
     def on_file_browser_double_click(self, index):
         path = self.file_model.filePath(index)
@@ -1180,9 +1292,9 @@ class FileClassifierApp(QMainWindow):
                     if match:
                         prefix, sep, frame, ext = match.groups()
                         key = f"{prefix}{sep if sep else ''}####{ext}"
-                        seq_dict[key].append(fname)
+                        seq_dict[key].append(entry)
                     else:
-                        seq_dict[fname].append(fname)
+                        seq_dict[fname].append(entry)
             processed += 1
             if total_dirs > 0:
                 pct = int((processed/total_dirs)*100)
@@ -1190,11 +1302,12 @@ class FileClassifierApp(QMainWindow):
                 QApplication.processEvents()
                 self.set_info(f"Scanning: {current}")
         # Add representative entries
-        for key, files in seq_dict.items():
-            if len(files) > 1 and '####' in key:
-                rep = key
+        for key, paths in seq_dict.items():
+            if len(paths) > 1 and '####' in key:
+                dir_path = os.path.dirname(paths[0])
+                rep = os.path.normpath(os.path.join(dir_path, key))
             else:
-                rep = files[0]
+                rep = paths[0]
             if rep not in self.get_all_files():
                 self.file_list_widget.addItem(rep)
         self.progress_bar.setVisible(False)
@@ -1237,6 +1350,11 @@ class FileClassifierApp(QMainWindow):
         elif provider == "Mistral":
             api_key = self.mistral_api_key_input.text().strip()
             return MistralLLM(model, api_key)
+        elif provider == "LM Studio":
+            lmstudio_url = self.lmstudio_url_input.text().strip()
+            if not lmstudio_url:
+                raise ValueError("Please enter a valid LM Studio server URL")
+            return LMStudioLLM(model=model, base_url=lmstudio_url)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 
@@ -1290,3 +1408,57 @@ class FileClassifierApp(QMainWindow):
                 dst = self.results_table.item(row, 1).text()
                 results.append((src, dst))
         return results
+
+    def send_chat_message(self):
+        user_msg = self.chat_input.text().strip()
+        if not user_msg:
+            return
+        mode = self.chat_mode_dropdown.currentText().lower()
+        self.chat_history.append(f"<b>You:</b> {user_msg}")
+        self.chat_input.clear()
+        try:
+            llm = self.get_llm_instance()
+        except ValueError as e:
+            self.chat_history.append(f"<span style='color:red'>Configuration Error: {e}</span>")
+            return
+        try:
+            if mode == 'chat':
+                response = llm.invoke(user_msg)
+                self.chat_history.append(f"<b>Model:</b> {response}")
+            else:  # refine mode
+                selected = self.get_selected_results()
+                if not selected:
+                    self.chat_history.append("<span style='color:red'>No files selected in results table for refinement.</span>")
+                    return
+                # build minimal refine prompt
+                project_root = self.project_folder_input.text().strip()
+                file_lines = []
+                for src, dst in selected:
+                    try:
+                        rel_dst = os.path.relpath(dst, project_root)
+                    except Exception:
+                        rel_dst = dst
+                    file_lines.append(f"{src} -> {rel_dst}")
+                files_str = "\n".join(file_lines)
+                # project structure context
+                if os.path.isdir(project_root):
+                    proj_struct = self.get_folder_structure(project_root, max_depth=6)
+                else:
+                    proj_struct = '(Project folder not accessible)'
+                with open(os.path.join(os.path.dirname(__file__), 'prompt_refine.md'), 'r', encoding='utf-8') as f:
+                    template = f.read()
+                prompt = template.replace('{selected_files}', files_str)
+                prompt = prompt.replace('{user_feedback}', user_msg)
+                prompt = prompt.replace('{project_structure}', proj_struct)
+                self.chat_history.append("<b>Debug: Full prompt sent to LLM:</b>")
+                self.chat_history.append(f"<pre>{prompt}</pre>")
+                response = llm.invoke(prompt)
+                self.chat_history.append(f"<b>Model (Refine):</b> {response}")
+        except Exception as e:
+            self.chat_history.append(f"<span style='color:red'>Error: {e}</span>")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = FileClassifierApp()
+    window.show()
+    sys.exit(app.exec_())
